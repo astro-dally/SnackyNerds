@@ -59,4 +59,4 @@ npm run dev
 
 The app will be available at `http://localhost:5173`. Make sure the backend is running at `http://localhost:5001`.
 
-*Currently in progress: Making things even crazier — by astro-dally* 🚀
+*Currently in progress: Making things even crazier — by @astro-dally* 🚀
