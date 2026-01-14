@@ -1,0 +1,22 @@
+// Prisma schema for SnackyNerds
+// Using SQLite for simple, file-based storage
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Snack model - our main product entity
+model Snack {
+  id          Int      @id @default(autoincrement())
+  name        String                           // Snack name (e.g., "Cheese Puffs")
+  price       Float                            // Price in dollars
+  description String                           // Short description
+  emoji       String                           // Fun emoji for visual flair 🍿
+  inStock     Boolean  @default(true)          // Availability status
+  createdAt   DateTime @default(now())         // When it was added
+}
