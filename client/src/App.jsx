@@ -26,14 +26,80 @@ const useWallet = () => {
   return [coins, setCoins];
 };
 
+/**
+ * Snack Hunt - Daily hidden snack discovery system
+ */
+const SNACK_HUNT_REWARD = 15;
+
+const useSnackHunt = (snacks, addCoins) => {
+  const [huntState, setHuntState] = useState(() => {
+    const saved = localStorage.getItem('snack_hunt');
+    return saved ? JSON.parse(saved) : { discovered: false, date: null };
+  });
+  const [showToast, setShowToast] = useState(false);
+  const [justDiscovered, setJustDiscovered] = useState(false);
+
+  // Generate daily hidden snack ID using date-based deterministic hash
+  const getHiddenSnackId = () => {
+    if (snacks.length === 0) return null;
+    const today = new Date().toDateString();
+    let hash = 0;
+    for (let i = 0; i < today.length; i++) {
+      hash = ((hash << 5) - hash) + today.charCodeAt(i);
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    const index = Math.abs(hash) % snacks.length;
+    return snacks[index]?.id;
+  };
+
+  const hiddenSnackId = getHiddenSnackId();
+  const today = new Date().toDateString();
+  const hasDiscoveredToday = huntState.discovered && huntState.date === today;
+
+  // Persist hunt state
+  useEffect(() => {
+    localStorage.setItem('snack_hunt', JSON.stringify(huntState));
+  }, [huntState]);
+
+  // Reset discovery state if it's a new day
+  useEffect(() => {
+    if (huntState.date && huntState.date !== today) {
+      setHuntState({ discovered: false, date: null });
+    }
+  }, [today, huntState.date]);
+
+  const discoverSnack = () => {
+    if (hasDiscoveredToday) return false;
+    
+    setHuntState({ discovered: true, date: today });
+    setJustDiscovered(true);
+    setShowToast(true);
+    addCoins(SNACK_HUNT_REWARD);
+
+    // Auto-hide toast after 4 seconds
+    setTimeout(() => setShowToast(false), 4000);
+    
+    return true;
+  };
+
+  return {
+    hiddenSnackId,
+    hasDiscoveredToday,
+    justDiscovered,
+    showToast,
+    discoverSnack,
+    reward: SNACK_HUNT_REWARD
+  };
+};
+
 // ─── SHARED COMPONENTS ───────────────────────────────────────────
 
-const Header = ({ cartCount, coins }) => (
+const Header = ({ cartCount, coins, coinPop }) => (
   <header className="header">
     <Link to="/" className="logo wobble">🍿 SNACKYNERDS</Link>
     <div className="nav-links">
       <div className="snacky-wallet">
-        <span className="coin-bounce">🪙</span> {coins} COINS
+        <span className={`coin-bounce ${coinPop ? 'coin-pop' : ''}`}>🪙</span> {coins} COINS
       </div>
       <Link to="/cart">
         <button className="brutal-btn pink">
@@ -47,17 +113,119 @@ const Header = ({ cartCount, coins }) => (
 const Marquee = () => (
   <div className="brutal-marquee">
     <div className="marquee-content">
-      FREE SHIPPING ON ALL ORDERS OVER 20 COINS! 🍿 DON'T MISS OUT ON THE CHEESE PUFFS RELOAD! 🍕 SNACKY COINS ARE THE FUTURE OF CURRENCY! 🐻
+      FREE SHIPPING ON ALL ORDERS OVER 20 COINS! 🍿 DON'T MISS OUT ON THE CHEESE PUFFS RELOAD! 🍕 SNACKY COINS ARE THE FUTURE OF CURRENCY! 🐻 🎯 SNACK HUNT: FIND TODAY'S HIDDEN SNACK FOR BONUS COINS! 🎯
     </div>
   </div>
 );
+
+/**
+ * Reward Toast - Celebration feedback for Snack Hunt discovery
+ */
+const RewardToast = ({ show, reward, onHide }) => {
+  const [hiding, setHiding] = useState(false);
+
+  useEffect(() => {
+    if (show) {
+      const hideTimer = setTimeout(() => {
+        setHiding(true);
+        setTimeout(() => {
+          setHiding(false);
+          onHide?.();
+        }, 400);
+      }, 3600);
+      return () => clearTimeout(hideTimer);
+    }
+  }, [show, onHide]);
+
+  if (!show && !hiding) return null;
+
+  return (
+    <div className={`reward-toast ${hiding ? 'hide' : ''}`}>
+      <div className="reward-title">You found today's Snack Hunt! 🎉</div>
+      <div className="reward-coins">
+        <span className="coin-icon">🪙</span>
+        <span>+{reward} COINS</span>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * SnackCard - Individual snack with Snack Hunt discovery mechanic
+ */
+const SnackCard = ({ snack, addToCart, isHidden, hasDiscovered, onDiscover }) => {
+  const [hoverTime, setHoverTime] = useState(0);
+  const [discovered, setDiscovered] = useState(false);
+  const timerRef = { current: null };
+
+  const handleMouseEnter = () => {
+    if (!isHidden || hasDiscovered || discovered) return;
+    
+    timerRef.current = setInterval(() => {
+      setHoverTime(prev => prev + 100);
+    }, 100);
+  };
+
+  const handleMouseLeave = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (!discovered) {
+      setHoverTime(0);
+    }
+  };
+
+  // Trigger discovery when hover time reaches threshold
+  useEffect(() => {
+    if (hoverTime >= 1500 && !discovered && isHidden && !hasDiscovered) {
+      setDiscovered(true);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      // Defer the parent state update to avoid render-time updates
+      setTimeout(() => onDiscover(), 0);
+    }
+  }, [hoverTime, discovered, isHidden, hasDiscovered, onDiscover]);
+
+  // Determine card class based on hunt state
+  let huntClass = '';
+  if (isHidden && !hasDiscovered && !discovered) {
+    huntClass = 'snack-hunt-target';
+  } else if (discovered) {
+    huntClass = 'snack-hunt-discovered';
+  } else if (isHidden && hasDiscovered) {
+    huntClass = 'snack-hunt-claimed';
+  }
+
+  return (
+    <div 
+      className={`brutal-card snack-card ${huntClass}`}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      <div className="snack-card-emoji">{snack.emoji}</div>
+      <h3 className="snack-card-name">{snack.name}</h3>
+      <p>{snack.description}</p>
+      <span className="snack-card-price">{snack.price.toFixed(0)} 🪙</span>
+      <button 
+        className="brutal-btn w-full"
+        style={{ marginTop: '1rem', width: '100%' }}
+        onClick={() => addToCart(snack)}
+      >
+        ADD TO PACK +
+      </button>
+    </div>
+  );
+};
 
 // ─── PAGES ───────────────────────────────────────────────────────
 
 /**
  * HOME PAGE
  */
-const HomePage = ({ snacks, addToCart }) => (
+const HomePage = ({ snacks, addToCart, snackHunt }) => (
   <div className="container">
     <section className="hero tilted">
       <h2>SNACKS FOR <br/> TRUE NERDS</h2>
@@ -66,19 +234,14 @@ const HomePage = ({ snacks, addToCart }) => (
 
     <div className="snack-grid">
       {snacks.map(snack => (
-        <div key={snack.id} className="brutal-card snack-card">
-          <div className="snack-card-emoji">{snack.emoji}</div>
-          <h3 className="snack-card-name">{snack.name}</h3>
-          <p>{snack.description}</p>
-          <span className="snack-card-price">{snack.price.toFixed(0)} 🪙</span>
-          <button 
-            className="brutal-btn w-full"
-            style={{ marginTop: '1rem', width: '100%' }}
-            onClick={() => addToCart(snack)}
-          >
-            ADD TO PACK +
-          </button>
-        </div>
+        <SnackCard
+          key={snack.id}
+          snack={snack}
+          addToCart={addToCart}
+          isHidden={snack.id === snackHunt.hiddenSnackId}
+          hasDiscovered={snackHunt.hasDiscoveredToday}
+          onDiscover={snackHunt.discoverSnack}
+        />
       ))}
     </div>
   </div>
@@ -193,6 +356,16 @@ function App() {
   const [snacks, setSnacks] = useState([]);
   const [cart, setCart] = useState([]);
   const [coins, setCoins] = useWallet();
+  const [coinPop, setCoinPop] = useState(false);
+
+  // Snack Hunt integration
+  const addCoins = (amount) => {
+    setCoins(prev => prev + amount);
+    setCoinPop(true);
+    setTimeout(() => setCoinPop(false), 400);
+  };
+  
+  const snackHunt = useSnackHunt(snacks, addCoins);
 
   useEffect(() => {
     const apiUrl = import.meta.env.VITE_API_URL || '';
@@ -219,10 +392,11 @@ function App() {
   return (
     <div className="app">
       <Marquee />
-      <Header cartCount={cartCount} coins={coins} />
+      <Header cartCount={cartCount} coins={coins} coinPop={coinPop} />
+      <RewardToast show={snackHunt.showToast} reward={snackHunt.reward} />
       
       <Routes>
-        <Route path="/" element={<HomePage snacks={snacks} addToCart={addToCart} />} />
+        <Route path="/" element={<HomePage snacks={snacks} addToCart={addToCart} snackHunt={snackHunt} />} />
         <Route path="/cart" element={<CartPage cart={cart} removeFromCart={removeFromCart} />} />
         <Route path="/checkout" element={<CheckoutPage cart={cart} coins={coins} setCoins={setCoins} setCart={setCart} />} />
         <Route path="/success" element={<SuccessPage />} />
