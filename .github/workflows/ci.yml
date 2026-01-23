@@ -14,14 +14,21 @@ jobs:
   build-client:
     name: Build Client
     runs-on: ubuntu-latest
-    
+
     defaults:
       run:
         working-directory: ./client
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Show workflow context (client)
+        run: |
+          echo "Repository (context): ${{ github.repository }}"
+          echo "Branch ref (context): ${{ github.ref }}"
+          echo "Commit SHA (env): $GITHUB_SHA"
+          echo "Actor (env): $GITHUB_ACTOR"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -29,23 +36,35 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
+
       - name: Install dependencies
-        run: npm install
+        run: |
+          echo "Installing client dependencies in $(pwd)"
+          npm install
 
       - name: Build
-        run: npm run build
+        run: |
+          echo "Running client build"
+          npm run build
 
   build-server:
     name: Build Server
     runs-on: ubuntu-latest
-    
+
     defaults:
       run:
         working-directory: ./server
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Show workflow context (server)
+        run: |
+          echo "Repository (context): ${{ github.repository }}"
+          echo "Branch ref (context): ${{ github.ref }}"
+          echo "Commit SHA (env): $GITHUB_SHA"
+          echo "Actor (env): $GITHUB_ACTOR"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -55,4 +74,6 @@ jobs:
           cache-dependency-path: server/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          echo "Installing server dependencies in $(pwd)"
+          npm install
