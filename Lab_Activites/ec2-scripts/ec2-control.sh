@@ -13,11 +13,11 @@ fi
 
 if [ "$ACTION" == "start" ]; then
   echo "[INFO] Requesting START for $INSTANCE_ID..."
-  aws ec2 start-instances --instance-ids "instanceid"
+  aws ec2 start-instances --instance-ids "$INSTANCE_ID"
 
 elif [ "$ACTION" == "stop" ]; then
   echo "[INFO] Requesting STOP for $INSTANCE_ID..."
-  aws ec2 stop-instances --instance-ids "instanceid"
+  aws ec2 stop-instances --instance-ids "$INSTANCE_ID"
 
 else
   echo "[ERROR] Invalid action: $ACTION"
