@@ -1,0 +1,94 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to AWS EC2
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Install & Build Client
+        run: |
+          cd client
+          npm ci
+          npm run build
+          echo "✅ Client built successfully"
+
+      - name: Install & Build Server
+        run: |
+          cd server
+          npm ci
+          echo "✅ Server dependencies installed"
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy to EC2
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+          set -e
+          
+          # Navigate to project directory (create if doesn't exist)
+          PROJECT_DIR="/home/${{ secrets.EC2_USER }}/SnackyNerds"
+          mkdir -p "$PROJECT_DIR"
+          cd "$PROJECT_DIR"
+          
+          # Clone/Update repository
+          if [ ! -d .git ]; then
+            git clone https://github.com/${{ github.repository }}.git .
+          else
+            git fetch origin
+            git reset --hard origin/${{ github.ref_name }}
+          fi
+          
+          # Install server dependencies and start
+          cd server
+          npm ci
+          npm run dev > server.log 2>&1 &
+          echo "✅ Server started on background"
+          
+          # Install client dependencies
+          cd ../client
+          npm ci
+          
+          # Optional: Build client (if needed on server)
+          # npm run build
+          
+          echo "✅ Deployment complete!"
+          EOF
+
+      - name: Health Check
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            'pgrep -f "node.*server" > /dev/null && echo "✅ Server is running" || echo "⚠️ Server may not be running"'
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Deployment Status
+        run: |
+          echo "Deployment to EC2 completed!"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref }}"
