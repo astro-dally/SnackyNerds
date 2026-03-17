@@ -42,6 +42,11 @@ jobs:
           echo "Installing client dependencies in $(pwd)"
           npm install
 
+      - name: Lint
+        run: |
+          echo "Running ESLint on client"
+          npm run lint
+
       - name: Build
         run: |
           echo "Running client build"
@@ -77,3 +82,13 @@ jobs:
         run: |
           echo "Installing server dependencies in $(pwd)"
           npm install
+
+      - name: Lint
+        run: |
+          echo "Running linter on server"
+          npm run lint
+
+      - name: Run Tests
+        run: |
+          echo "Running server tests"
+          npm test
