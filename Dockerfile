@@ -1,15 +1,6 @@
-FROM node:18-alpine
+FROM ubuntu:22.04
 
-WORKDIR /app
-
-# Copy only server dependencies
-COPY server/package*.json ./
-
-RUN npm install
-
-# Copy server code
-COPY server/ .
-
-EXPOSE 3000
-
-CMD ["npm", "start"]
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
