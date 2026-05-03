@@ -1,0 +1,337 @@
+# ──────────────────────────────────────────────────────────
+# SnackyNerds — Unified CI/CD Pipeline
+#
+# Workflow Order (matches rubric):
+#   Push/PR → Run Tests → Terraform Apply → Docker Build & Push → Deploy to ECS
+# ──────────────────────────────────────────────────────────
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, master, test]
+  pull_request:
+    branches: [main, master]
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPO: snackynerds
+
+# ──────────────────────────────────────────────────────────
+# PHASE 1 — Testing
+# ──────────────────────────────────────────────────────────
+jobs:
+  test:
+    name: "Phase 1 — Run Tests"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Node.js Setup ──
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "**/package-lock.json"
+
+      # ── Server Tests (Jest + JUnit Report) ──
+      - name: Install server dependencies
+        run: |
+          cd server
+          npm ci
+
+      - name: Run server unit & integration tests
+        run: |
+          cd server
+          npm test
+        env:
+          JEST_JUNIT_OUTPUT_DIR: ./reports
+          JEST_JUNIT_OUTPUT_NAME: junit.xml
+
+      - name: Upload server test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-test-report
+          path: server/reports/junit.xml
+          retention-days: 30
+
+      # ── Client Tests (Vitest + JUnit Report) ──
+      - name: Install client dependencies
+        run: |
+          cd client
+          npm ci
+
+      - name: Run client unit & integration tests
+        run: |
+          cd client
+          npx vitest run --reporter=default --reporter=junit --outputFile=reports/junit.xml
+
+      - name: Upload client test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-test-report
+          path: client/reports/junit.xml
+          retention-days: 30
+
+      # ── Client Lint & Build Verification ──
+      - name: Lint client
+        run: |
+          cd client
+          npm run lint
+
+      - name: Build client
+        run: |
+          cd client
+          npm run build
+
+  # ──────────────────────────────────────────────────────────
+  # PHASE 2 — Infrastructure Provisioning (Terraform)
+  # ──────────────────────────────────────────────────────────
+  terraform:
+    name: "Phase 2 — Terraform"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    defaults:
+      run:
+        working-directory: infra/terraform
+
+    outputs:
+      ecr_repository_url: ${{ steps.tf-outputs.outputs.ecr_repository_url }}
+      ecs_cluster_name: ${{ steps.tf-outputs.outputs.ecs_cluster_name }}
+      ecs_service_name: ${{ steps.tf-outputs.outputs.ecs_service_name }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── AWS Credentials ──
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # ── Terraform Setup ──
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      # ── Terraform Init ──
+      - name: Terraform Init
+        run: terraform init
+
+      # ── Terraform Validate ──
+      - name: Terraform Validate
+        run: terraform validate
+
+      # ── Terraform Plan ──
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      # ── Terraform Apply ──
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+      # ── Capture Outputs ──
+      - name: Get Terraform outputs
+        id: tf-outputs
+        run: |
+          echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
+          echo "ecs_cluster_name=$(terraform output -raw ecs_cluster_name)" >> $GITHUB_OUTPUT
+          echo "ecs_service_name=$(terraform output -raw ecs_service_name)" >> $GITHUB_OUTPUT
+
+  # ──────────────────────────────────────────────────────────
+  # PHASE 3 — Container Build & ECR Push
+  # ──────────────────────────────────────────────────────────
+  docker-build:
+    name: "Phase 3 — Docker Build & Push"
+    runs-on: ubuntu-latest
+    needs: terraform
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── AWS Credentials ──
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # ── Login to ECR ──
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── Build Docker Image (Multi-stage) ──
+      - name: Build Docker image
+        run: |
+          ECR_URL=${{ needs.terraform.outputs.ecr_repository_url }}
+          echo "Building image from server/Dockerfile..."
+          docker build \
+            -t snackynerds:${{ github.sha }} \
+            -t snackynerds:latest \
+            -t $ECR_URL:${{ github.sha }} \
+            -t $ECR_URL:latest \
+            ./server
+
+      # ── Push to ECR ──
+      - name: Push image to ECR
+        run: |
+          ECR_URL=${{ needs.terraform.outputs.ecr_repository_url }}
+          echo "Pushing $ECR_URL:${{ github.sha }}..."
+          docker push $ECR_URL:${{ github.sha }}
+          echo "Pushing $ECR_URL:latest..."
+          docker push $ECR_URL:latest
+          echo "✅ Image pushed to ECR successfully"
+
+  # ──────────────────────────────────────────────────────────
+  # PHASE 3b — Deploy to ECS Fargate
+  # ──────────────────────────────────────────────────────────
+  deploy-ecs:
+    name: "Phase 3b — Deploy to ECS"
+    runs-on: ubuntu-latest
+    needs: [terraform, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── AWS Credentials ──
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # ── Update ECS Task Definition with new image ──
+      - name: Register new task definition
+        id: task-def
+        run: |
+          ECR_URL=${{ needs.terraform.outputs.ecr_repository_url }}
+          CLUSTER=${{ needs.terraform.outputs.ecs_cluster_name }}
+          SERVICE=${{ needs.terraform.outputs.ecs_service_name }}
+
+          echo "📦 Getting current task definition..."
+          TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster $CLUSTER \
+            --services $SERVICE \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          echo "📝 Fetching task definition details..."
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition $TASK_DEF_ARN \
+            --query 'taskDefinition')
+
+          echo "🔄 Updating image to $ECR_URL:${{ github.sha }}..."
+          NEW_TASK_DEF=$(echo $TASK_DEF | jq \
+            --arg IMAGE "$ECR_URL:${{ github.sha }}" \
+            '.containerDefinitions[0].image = $IMAGE |
+             del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+
+          echo "📤 Registering new task definition revision..."
+          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "task_def_arn=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          echo "✅ New task definition: $NEW_TASK_DEF_ARN"
+
+      # ── Deploy to ECS ──
+      - name: Update ECS service
+        run: |
+          CLUSTER=${{ needs.terraform.outputs.ecs_cluster_name }}
+          SERVICE=${{ needs.terraform.outputs.ecs_service_name }}
+          TASK_DEF=${{ steps.task-def.outputs.task_def_arn }}
+
+          echo "🚀 Deploying new task definition to ECS..."
+          aws ecs update-service \
+            --cluster $CLUSTER \
+            --service $SERVICE \
+            --task-definition $TASK_DEF \
+            --force-new-deployment
+
+      # ── Wait for Stability ──
+      - name: Wait for service stability
+        run: |
+          CLUSTER=${{ needs.terraform.outputs.ecs_cluster_name }}
+          SERVICE=${{ needs.terraform.outputs.ecs_service_name }}
+
+          echo "⏳ Waiting for service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster $CLUSTER \
+            --services $SERVICE
+          echo "✅ Service is stable"
+
+      # ── Verify Deployment ──
+      - name: Verify service is running
+        run: |
+          CLUSTER=${{ needs.terraform.outputs.ecs_cluster_name }}
+          SERVICE=${{ needs.terraform.outputs.ecs_service_name }}
+
+          echo "🔍 Checking service status..."
+          RUNNING=$(aws ecs describe-services \
+            --cluster $CLUSTER \
+            --services $SERVICE \
+            --query 'services[0].runningCount' \
+            --output text)
+
+          DESIRED=$(aws ecs describe-services \
+            --cluster $CLUSTER \
+            --services $SERVICE \
+            --query 'services[0].desiredCount' \
+            --output text)
+
+          echo "Running: $RUNNING / Desired: $DESIRED"
+
+          if [ "$RUNNING" -eq "$DESIRED" ]; then
+            echo "✅ Deployment successful! Service is running."
+          else
+            echo "⚠️ Warning: Running count ($RUNNING) does not match desired ($DESIRED)"
+            exit 1
+          fi
+
+          # ── Get public IP ──
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster $CLUSTER \
+            --service-name $SERVICE \
+            --query 'taskArns[0]' \
+            --output text)
+
+          if [ "$TASK_ARN" != "None" ] && [ -n "$TASK_ARN" ]; then
+            ENI_ID=$(aws ecs describe-tasks \
+              --cluster $CLUSTER \
+              --tasks $TASK_ARN \
+              --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+              --output text)
+
+            PUBLIC_IP=$(aws ec2 describe-network-interfaces \
+              --network-interface-ids $ENI_ID \
+              --query 'NetworkInterfaces[0].Association.PublicIp' \
+              --output text 2>/dev/null || echo "N/A")
+
+            echo ""
+            echo "════════════════════════════════════════════"
+            echo "  🍿 SnackyNerds API is live!"
+            echo "  🌐 http://$PUBLIC_IP:5001/api/health"
+            echo "════════════════════════════════════════════"
+          fi
