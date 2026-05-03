@@ -3,6 +3,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const { PrismaClient } = require('@prisma/client');
 
 const app = express();
@@ -73,9 +74,22 @@ app.delete('/api/snacks/:id', async (req, res) => {
   }
 });
 
-// Root route
-app.get('/', (req, res) => {
-  res.send('🍿 SnackyNerds Backend - Grab some snacks!');
+// ──────────────────────────────────────────
+// SERVE FRONTEND (Production)
+// ──────────────────────────────────────────
+const publicPath = path.join(__dirname, '..', 'public');
+app.use(express.static(publicPath));
+
+// SPA fallback — serve index.html for all non-API routes
+app.get('*', (req, res) => {
+  const indexPath = path.join(publicPath, 'index.html');
+  const fs = require('fs');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.send('🍿 SnackyNerds Backend - Grab some snacks!');
+  }
 });
 
 module.exports = app;
+
