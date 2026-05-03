@@ -15,7 +15,9 @@ on:
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPO: snackynerds
+  ECR_REPO_NAME: snackynerds
+  ECS_CLUSTER_NAME: snackynerds-cluster
+  ECS_SERVICE_NAME: snackynerds-service
 
 # ──────────────────────────────────────────────────────────
 # PHASE 1 — Testing
@@ -102,11 +104,6 @@ jobs:
       run:
         working-directory: infra/terraform
 
-    outputs:
-      ecr_repository_url: ${{ steps.tf-outputs.outputs.ecr_repository_url }}
-      ecs_cluster_name: ${{ steps.tf-outputs.outputs.ecs_cluster_name }}
-      ecs_service_name: ${{ steps.tf-outputs.outputs.ecs_service_name }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -142,14 +139,6 @@ jobs:
       - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
 
-      # ── Capture Outputs ──
-      - name: Get Terraform outputs
-        id: tf-outputs
-        run: |
-          echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
-          echo "ecs_cluster_name=$(terraform output -raw ecs_cluster_name)" >> $GITHUB_OUTPUT
-          echo "ecs_service_name=$(terraform output -raw ecs_service_name)" >> $GITHUB_OUTPUT
-
   # ──────────────────────────────────────────────────────────
   # PHASE 3 — Container Build & ECR Push
   # ──────────────────────────────────────────────────────────
@@ -172,6 +161,18 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # ── Get ECR URL from AWS directly ──
+      - name: Get ECR Repository URL
+        id: ecr-info
+        run: |
+          ECR_URL=$(aws ecr describe-repositories \
+            --repository-names ${{ env.ECR_REPO_NAME }} \
+            --region ${{ secrets.AWS_REGION }} \
+            --query 'repositories[0].repositoryUri' \
+            --output text)
+          echo "ecr_url=$ECR_URL" >> $GITHUB_OUTPUT
+          echo "ECR URL: $ECR_URL"
+
       # ── Login to ECR ──
       - name: Login to Amazon ECR
         id: ecr-login
@@ -180,7 +181,7 @@ jobs:
       # ── Build Docker Image (Multi-stage) ──
       - name: Build Docker image
         run: |
-          ECR_URL=${{ needs.terraform.outputs.ecr_repository_url }}
+          ECR_URL=${{ steps.ecr-info.outputs.ecr_url }}
           echo "Building image from server/Dockerfile..."
           docker build \
             -t snackynerds:${{ github.sha }} \
@@ -192,7 +193,7 @@ jobs:
       # ── Push to ECR ──
       - name: Push image to ECR
         run: |
-          ECR_URL=${{ needs.terraform.outputs.ecr_repository_url }}
+          ECR_URL=${{ steps.ecr-info.outputs.ecr_url }}
           echo "Pushing $ECR_URL:${{ github.sha }}..."
           docker push $ECR_URL:${{ github.sha }}
           echo "Pushing $ECR_URL:latest..."
@@ -221,13 +222,25 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # ── Get ECR URL from AWS directly ──
+      - name: Get ECR Repository URL
+        id: ecr-info
+        run: |
+          ECR_URL=$(aws ecr describe-repositories \
+            --repository-names ${{ env.ECR_REPO_NAME }} \
+            --region ${{ secrets.AWS_REGION }} \
+            --query 'repositories[0].repositoryUri' \
+            --output text)
+          echo "ecr_url=$ECR_URL" >> $GITHUB_OUTPUT
+          echo "ECR URL: $ECR_URL"
+
       # ── Update ECS Task Definition with new image ──
       - name: Register new task definition
         id: task-def
         run: |
-          ECR_URL=${{ needs.terraform.outputs.ecr_repository_url }}
-          CLUSTER=${{ needs.terraform.outputs.ecs_cluster_name }}
-          SERVICE=${{ needs.terraform.outputs.ecs_service_name }}
+          ECR_URL=${{ steps.ecr-info.outputs.ecr_url }}
+          CLUSTER=${{ env.ECS_CLUSTER_NAME }}
+          SERVICE=${{ env.ECS_SERVICE_NAME }}
 
           echo "📦 Getting current task definition..."
           TASK_DEF_ARN=$(aws ecs describe-services \
@@ -259,8 +272,8 @@ jobs:
       # ── Deploy to ECS ──
       - name: Update ECS service
         run: |
-          CLUSTER=${{ needs.terraform.outputs.ecs_cluster_name }}
-          SERVICE=${{ needs.terraform.outputs.ecs_service_name }}
+          CLUSTER=${{ env.ECS_CLUSTER_NAME }}
+          SERVICE=${{ env.ECS_SERVICE_NAME }}
           TASK_DEF=${{ steps.task-def.outputs.task_def_arn }}
 
           echo "🚀 Deploying new task definition to ECS..."
@@ -268,13 +281,14 @@ jobs:
             --cluster $CLUSTER \
             --service $SERVICE \
             --task-definition $TASK_DEF \
-            --force-new-deployment
+            --force-new-deployment \
+            --no-cli-pager
 
       # ── Wait for Stability ──
       - name: Wait for service stability
         run: |
-          CLUSTER=${{ needs.terraform.outputs.ecs_cluster_name }}
-          SERVICE=${{ needs.terraform.outputs.ecs_service_name }}
+          CLUSTER=${{ env.ECS_CLUSTER_NAME }}
+          SERVICE=${{ env.ECS_SERVICE_NAME }}
 
           echo "⏳ Waiting for service to stabilize..."
           aws ecs wait services-stable \
@@ -285,8 +299,8 @@ jobs:
       # ── Verify Deployment ──
       - name: Verify service is running
         run: |
-          CLUSTER=${{ needs.terraform.outputs.ecs_cluster_name }}
-          SERVICE=${{ needs.terraform.outputs.ecs_service_name }}
+          CLUSTER=${{ env.ECS_CLUSTER_NAME }}
+          SERVICE=${{ env.ECS_SERVICE_NAME }}
 
           echo "🔍 Checking service status..."
           RUNNING=$(aws ecs describe-services \
