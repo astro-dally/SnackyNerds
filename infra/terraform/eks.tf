@@ -10,7 +10,7 @@ resource "aws_eks_cluster" "snackynerds" {
   version  = "1.32"
 
   vpc_config {
-    subnet_ids         = data.aws_subnets.default.ids
+    subnet_ids         = data.aws_subnets.eks_compatible.ids
     security_group_ids = [aws_security_group.eks_cluster.id]
 
     endpoint_public_access  = true
@@ -29,7 +29,7 @@ resource "aws_eks_node_group" "snackynerds" {
   cluster_name    = aws_eks_cluster.snackynerds.name
   node_group_name = "snackynerds-nodes"
   node_role_arn   = data.aws_iam_role.lab_role.arn
-  subnet_ids      = data.aws_subnets.default.ids
+  subnet_ids      = data.aws_subnets.eks_compatible.ids
 
   scaling_config {
     desired_size = 2
