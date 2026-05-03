@@ -80,6 +80,10 @@ resource "aws_ecs_task_definition" "snackynerds" {
         {
           name  = "NODE_ENV"
           value = "production"
+        },
+        {
+          name  = "DATABASE_URL"
+          value = "file:/app/prisma/dev.db"
         }
       ]
     }
