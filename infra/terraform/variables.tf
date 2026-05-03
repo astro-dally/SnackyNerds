@@ -43,3 +43,9 @@ variable "app_image_tag" {
   type        = string
   default     = "latest"
 }
+
+variable "eks_cluster_name" {
+  description = "EKS cluster name"
+  type        = string
+  default     = "snackynerds-eks"
+}

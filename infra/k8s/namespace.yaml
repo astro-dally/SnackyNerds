@@ -1,0 +1,11 @@
+# ──────────────────────────────────────────────────────────
+# SnackyNerds — Kubernetes Namespace
+# Rubric: ✅ Non-default namespace
+# ──────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: snackynerds
+  labels:
+    app: snackynerds
+    managed-by: github-actions

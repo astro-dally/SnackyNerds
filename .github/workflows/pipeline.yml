@@ -2,7 +2,8 @@
 # SnackyNerds — Unified CI/CD Pipeline
 #
 # Workflow Order (matches rubric):
-#   Push/PR → Run Tests → Terraform Apply → Docker Build & Push → Deploy to ECS
+#   Push/PR → Run Tests → Terraform Apply → Docker Build & Push
+#   → Deploy to ECS (Phase 3) + Deploy to EKS (Phase 4)
 # ──────────────────────────────────────────────────────────
 
 name: CI/CD Pipeline
@@ -18,6 +19,7 @@ env:
   ECR_REPO_NAME: snackynerds
   ECS_CLUSTER_NAME: snackynerds-cluster
   ECS_SERVICE_NAME: snackynerds-service
+  EKS_CLUSTER_NAME: snackynerds-eks
 
 # ──────────────────────────────────────────────────────────
 # PHASE 1 — Testing
@@ -367,7 +369,128 @@ jobs:
 
             echo ""
             echo "════════════════════════════════════════════"
-            echo "  🍿 SnackyNerds API is live!"
+            echo "  🍿 SnackyNerds API is live (ECS)!"
             echo "  🌐 http://$PUBLIC_IP:5001/api/health"
             echo "════════════════════════════════════════════"
           fi
+
+  # ──────────────────────────────────────────────────────────
+  # PHASE 4 — Deploy to EKS (Kubernetes)
+  # Runs in PARALLEL with deploy-ecs (same image, different target)
+  # ──────────────────────────────────────────────────────────
+  deploy-eks:
+    name: "Phase 4 — Deploy to EKS"
+    runs-on: ubuntu-latest
+    needs: [terraform, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── AWS Credentials ──
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # ── Configure kubectl ──
+      - name: Configure cluster access
+        run: |
+          aws eks update-kubeconfig \
+            --name snackynerds-eks \
+            --region ${{ secrets.AWS_REGION }}
+          echo "✅ kubectl configured"
+          kubectl version --client
+
+      # ── Get ECR URL ──
+      - name: Get ECR Repository URL
+        id: ecr-info
+        run: |
+          ECR_URL=$(aws ecr describe-repositories \
+            --repository-names ${{ env.ECR_REPO_NAME }} \
+            --region ${{ secrets.AWS_REGION }} \
+            --query 'repositories[0].repositoryUri' \
+            --output text)
+          echo "ecr_url=$ECR_URL" >> $GITHUB_OUTPUT
+          echo "ECR URL: $ECR_URL"
+
+      # ── Set image in deployment manifest ──
+      - name: Update deployment image
+        run: |
+          ECR_URL=${{ steps.ecr-info.outputs.ecr_url }}
+          IMAGE="$ECR_URL:${{ github.sha }}"
+          echo "🔄 Setting image to: $IMAGE"
+          sed -i "s|IMAGE_PLACEHOLDER|$IMAGE|g" infra/k8s/deployment.yaml
+          echo "--- Updated deployment.yaml ---"
+          cat infra/k8s/deployment.yaml
+
+      # ── Deploy Kubernetes manifests ──
+      - name: Deploy to Kubernetes
+        run: |
+          echo "📦 Applying Kubernetes manifests..."
+          kubectl apply -f infra/k8s/namespace.yaml
+          kubectl apply -f infra/k8s/deployment.yaml
+          kubectl apply -f infra/k8s/service.yaml
+          echo "✅ Manifests applied"
+
+      # ── Wait for rollout ──
+      - name: Wait for deployment rollout
+        run: |
+          echo "⏳ Waiting for deployment to stabilize..."
+          kubectl rollout status deployment/snackynerds-api \
+            -n snackynerds \
+            --timeout=180s
+          echo "✅ Deployment is stable"
+
+      # ── Verify deployment ──
+      - name: Verify EKS deployment
+        run: |
+          echo "🔍 Checking pods..."
+          kubectl get pods -n snackynerds -o wide
+
+          echo ""
+          echo "🔍 Checking service..."
+          kubectl get svc -n snackynerds
+
+          echo ""
+          echo "🔍 Checking replicas..."
+          READY=$(kubectl get deployment snackynerds-api -n snackynerds \
+            -o jsonpath='{.status.readyReplicas}')
+          DESIRED=$(kubectl get deployment snackynerds-api -n snackynerds \
+            -o jsonpath='{.spec.replicas}')
+          echo "Ready: $READY / Desired: $DESIRED"
+
+          if [ "$READY" = "$DESIRED" ]; then
+            echo "✅ All replicas are running!"
+          else
+            echo "⚠️ Not all replicas are ready"
+            exit 1
+          fi
+
+          # ── Get LoadBalancer URL ──
+          echo ""
+          echo "⏳ Waiting for LoadBalancer DNS..."
+          for i in $(seq 1 12); do
+            LB_HOST=$(kubectl get svc snackynerds-api -n snackynerds \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            if [ -n "$LB_HOST" ]; then
+              break
+            fi
+            echo "   Waiting... ($i/12)"
+            sleep 10
+          done
+
+          if [ -n "$LB_HOST" ]; then
+            echo ""
+            echo "════════════════════════════════════════════"
+            echo "  🍿 SnackyNerds API is live (EKS)!"
+            echo "  🌐 http://$LB_HOST:5001/api/health"
+            echo "════════════════════════════════════════════"
+          else
+            echo "⚠️ LoadBalancer DNS not ready yet — check AWS Console"
+          fi
+

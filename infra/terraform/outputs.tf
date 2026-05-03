@@ -45,3 +45,14 @@ output "security_group_id" {
   description = "ECS tasks security group ID"
   value       = aws_security_group.ecs_tasks.id
 }
+
+# ── EKS ──
+output "eks_cluster_name" {
+  description = "EKS cluster name"
+  value       = aws_eks_cluster.snackynerds.name
+}
+
+output "eks_cluster_endpoint" {
+  description = "EKS cluster API endpoint"
+  value       = aws_eks_cluster.snackynerds.endpoint
+}
