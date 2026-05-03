@@ -21,6 +21,24 @@ data "aws_subnets" "default" {
   }
 }
 
+# ── EKS-Compatible Subnets (exclude us-east-1e — not supported by EKS) ──
+data "aws_subnets" "eks_compatible" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+
+  filter {
+    name   = "default-for-az"
+    values = ["true"]
+  }
+
+  filter {
+    name   = "availability-zone"
+    values = ["us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d", "us-east-1f"]
+  }
+}
+
 # ── Security Group for ECS Tasks ──
 resource "aws_security_group" "ecs_tasks" {
   name        = "snackynerds-ecs-sg"
