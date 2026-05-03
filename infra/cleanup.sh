@@ -16,6 +16,9 @@ TASK_FAMILY="snackynerds-task"
 S3_BUCKET="snackynerds-tfstate-230143"
 LOG_GROUP="/ecs/snackynerds"
 SG_NAME="snackynerds-ecs-sg"
+EKS_CLUSTER="snackynerds-eks"
+EKS_NODE_GROUP="snackynerds-nodes"
+EKS_SG_NAME="snackynerds-eks-sg"
 
 echo ""
 echo "════════════════════════════════════════════════"
@@ -194,6 +197,82 @@ if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
     fi
 else
     echo "   ⏭️  Security group not found"
+fi
+
+# ── 8. Delete EKS Kubernetes Resources ──
+echo "🔄 [8/11] Deleting Kubernetes resources..."
+if aws eks describe-cluster --name "$EKS_CLUSTER" --region "$REGION" > /dev/null 2>&1; then
+    aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$REGION" > /dev/null 2>&1 || true
+    kubectl delete namespace snackynerds --ignore-not-found > /dev/null 2>&1 || true
+    echo "   ✅ Kubernetes namespace deleted"
+else
+    echo "   ⏭️  EKS cluster not found (skipping K8s cleanup)"
+fi
+
+# ── 9. Delete EKS Node Group ──
+echo "🔄 [9/11] Deleting EKS node group..."
+NODE_STATUS=$(aws eks describe-nodegroup \
+    --cluster-name "$EKS_CLUSTER" \
+    --nodegroup-name "$EKS_NODE_GROUP" \
+    --region "$REGION" \
+    --query 'nodegroup.status' \
+    --output text 2>/dev/null || echo "MISSING")
+
+if [ "$NODE_STATUS" = "ACTIVE" ]; then
+    aws eks delete-nodegroup \
+        --cluster-name "$EKS_CLUSTER" \
+        --nodegroup-name "$EKS_NODE_GROUP" \
+        --region "$REGION" \
+        --no-cli-pager > /dev/null 2>&1 || true
+    echo "   ⏳ Node group deletion initiated (takes ~5 min)..."
+    aws eks wait nodegroup-deleted \
+        --cluster-name "$EKS_CLUSTER" \
+        --nodegroup-name "$EKS_NODE_GROUP" \
+        --region "$REGION" 2>/dev/null || true
+    echo "   ✅ EKS node group deleted"
+else
+    echo "   ⏭️  EKS node group not found"
+fi
+
+# ── 10. Delete EKS Cluster ──
+echo "🔄 [10/11] Deleting EKS cluster..."
+CLUSTER_STATUS=$(aws eks describe-cluster \
+    --name "$EKS_CLUSTER" \
+    --region "$REGION" \
+    --query 'cluster.status' \
+    --output text 2>/dev/null || echo "MISSING")
+
+if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
+    aws eks delete-cluster \
+        --name "$EKS_CLUSTER" \
+        --region "$REGION" \
+        --no-cli-pager > /dev/null 2>&1 || true
+    echo "   ⏳ Cluster deletion initiated (takes ~5 min)..."
+    aws eks wait cluster-deleted \
+        --name "$EKS_CLUSTER" \
+        --region "$REGION" 2>/dev/null || true
+    echo "   ✅ EKS cluster deleted"
+else
+    echo "   ⏭️  EKS cluster not found"
+fi
+
+# ── 11. Delete EKS Security Group ──
+echo "🔄 [11/11] Deleting EKS security group..."
+EKS_SG_ID=$(aws ec2 describe-security-groups \
+    --filters "Name=group-name,Values=$EKS_SG_NAME" \
+    --region "$REGION" \
+    --query 'SecurityGroups[0].GroupId' \
+    --output text 2>/dev/null || echo "None")
+
+if [ -n "$EKS_SG_ID" ] && [ "$EKS_SG_ID" != "None" ]; then
+    sleep 5
+    aws ec2 delete-security-group \
+        --group-id "$EKS_SG_ID" \
+        --region "$REGION" > /dev/null 2>&1 && \
+        echo "   ✅ EKS security group deleted" || \
+        echo "   ⚠️  Could not delete EKS SG — retry later"
+else
+    echo "   ⏭️  EKS security group not found"
 fi
 
 # ── Clean local Terraform state ──
