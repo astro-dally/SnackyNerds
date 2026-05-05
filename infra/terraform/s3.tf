@@ -1,11 +1,19 @@
 # ──────────────────────────────────────────────────────────
-# SnackyNerds — S3 Bucket
+# SnackyNerds — S3 Bucket (Idempotent State Storage)
 # Rubric: Unique name, versioning, encryption, no public access
 # ──────────────────────────────────────────────────────────
 
+data "aws_caller_identity" "current" {}
+
 resource "aws_s3_bucket" "snackynerds" {
-  bucket        = var.s3_bucket_name
-  force_destroy = true
+  # Account ID suffix ensures global uniqueness and idempotency
+  bucket        = "snackynerds-tfstate-${data.aws_caller_identity.current.account_id}"
+  force_destroy = false # Changed to false for production safety
+
+  # Prevent accidental deletion of the state bucket
+  lifecycle {
+    prevent_destroy = true
+  }
 
   tags = {
     Name        = "SnackyNerds Terraform State"

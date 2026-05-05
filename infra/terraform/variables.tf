@@ -8,11 +8,6 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "s3_bucket_name" {
-  description = "Unique S3 bucket name"
-  type        = string
-  default     = "snackynerds-tfstate-230144"
-}
 
 variable "ecr_repo_name" {
   description = "ECR repository name"
@@ -50,11 +45,7 @@ variable "eks_cluster_name" {
   default     = "snackynerds-eks1"
 }
 
-variable "enable_deployment_check" {
-  description = "Enable checking for running deployments before scaling"
-  type        = bool
-  default     = true
-}
+
 
 variable "desired_task_count" {
   description = "Desired number of running tasks/deployments"
@@ -62,8 +53,3 @@ variable "desired_task_count" {
   default     = 1
 }
 
-variable "allow_multiple_deployments" {
-  description = "Allow multiple simultaneous deployments"
-  type        = bool
-  default     = true
-}

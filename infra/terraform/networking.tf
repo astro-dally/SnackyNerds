@@ -39,6 +39,7 @@ data "aws_subnets" "eks_compatible" {
   }
 }
 
+
 # ── Security Group for ECS Tasks ──
 resource "aws_security_group" "ecs_tasks" {
   name        = "snackynerds-ecs-sg"
@@ -118,3 +119,4 @@ resource "aws_security_group" "eks_cluster" {
     ManagedBy = "terraform"
   }
 }
+
