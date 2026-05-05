@@ -12,7 +12,7 @@ resource "aws_ecr_repository" "snackynerds" {
   }
 
   tags = {
-    Name        = "SnackyNerds ECR"
+    Name        = "SnackyNerds ECR1"
     Project     = "SnackyNerds"
     Environment = "production"
     ManagedBy   = "terraform"

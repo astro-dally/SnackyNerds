@@ -9,7 +9,7 @@ resource "aws_s3_bucket" "snackynerds" {
 
   tags = {
     Name        = "SnackyNerds Terraform State"
-    Project     = "SnackyNerds"
+    Project     = "snackynerds1"
     Environment = "production"
     ManagedBy   = "terraform"
   }

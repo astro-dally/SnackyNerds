@@ -95,12 +95,22 @@ resource "aws_ecs_task_definition" "snackynerds" {
   }
 }
 
+# ── Data Source: Get current running tasks ──
+data "aws_ecs_task_set" "current" {
+  count           = var.enable_deployment_check ? 1 : 0
+  cluster         = aws_ecs_cluster.snackynerds.id
+  service         = var.ecs_service_name
+  task_definition = aws_ecs_task_definition.snackynerds.arn
+
+  depends_on = [aws_ecs_service.snackynerds]
+}
+
 # ── ECS Service ──
 resource "aws_ecs_service" "snackynerds" {
   name            = var.ecs_service_name
   cluster         = aws_ecs_cluster.snackynerds.id
   task_definition = aws_ecs_task_definition.snackynerds.arn
-  desired_count   = 1
+  desired_count   = var.desired_task_count
   launch_type     = "FARGATE"
 
   network_configuration {
