@@ -95,12 +95,13 @@ resource "aws_ecs_task_definition" "snackynerds" {
   }
 }
 
+
 # ── ECS Service ──
 resource "aws_ecs_service" "snackynerds" {
   name            = var.ecs_service_name
   cluster         = aws_ecs_cluster.snackynerds.id
   task_definition = aws_ecs_task_definition.snackynerds.arn
-  desired_count   = 1
+  desired_count   = var.desired_task_count
   launch_type     = "FARGATE"
 
   network_configuration {

@@ -8,28 +8,23 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "s3_bucket_name" {
-  description = "Unique S3 bucket name"
-  type        = string
-  default     = "snackynerds-tfstate-230143"
-}
 
 variable "ecr_repo_name" {
   description = "ECR repository name"
   type        = string
-  default     = "snackynerds"
+  default     = "snackynerds1"
 }
 
 variable "ecs_cluster_name" {
   description = "ECS cluster name"
   type        = string
-  default     = "snackynerds-cluster"
+  default     = "snackynerds-cluster1"
 }
 
 variable "ecs_service_name" {
   description = "ECS service name"
   type        = string
-  default     = "snackynerds-service"
+  default     = "snackynerds-service1"
 }
 
 variable "app_port" {
@@ -47,5 +42,14 @@ variable "app_image_tag" {
 variable "eks_cluster_name" {
   description = "EKS cluster name"
   type        = string
-  default     = "snackynerds-eks"
+  default     = "snackynerds-eks1"
 }
+
+
+
+variable "desired_task_count" {
+  description = "Desired number of running tasks/deployments"
+  type        = number
+  default     = 1
+}
+
